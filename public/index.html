@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AGEDRES · Ajedrez en línea</title>
+  <meta name="description" content="Juega ajedrez en línea contra otras personas en tiempo real." />
+  <link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#/">AGEDRES <span>ajedrez en línea</span></a>
+    <div id="conn" class="conn">—</div>
+  </header>
+
+  <main>
+    <!-- LOBBY -->
+    <section id="view-lobby" class="view">
+      <h1>Jugar una partida</h1>
+
+      <div class="card">
+        <label class="field">
+          <span>Tu nombre</span>
+          <input id="nameInput" maxlength="24" placeholder="Anónimo" autocomplete="off" />
+        </label>
+        <div class="row gap">
+          <button id="createBtn" class="btn primary">Crear partida</button>
+          <button id="createRandomBtn" class="btn">Color aleatorio</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Jugar contra la computadora</h2>
+        <div class="row gap">
+          <label class="field small">
+            <span>Dificultad</span>
+            <select id="aiLevel">
+              <option value="easy">Fácil</option>
+              <option value="medium" selected>Intermedio</option>
+              <option value="hard">Difícil</option>
+            </select>
+          </label>
+          <label class="field small">
+            <span>Tu color</span>
+            <select id="aiColor">
+              <option value="w">Blancas</option>
+              <option value="b">Negras</option>
+              <option value="random">Aleatorio</option>
+            </select>
+          </label>
+        </div>
+        <div class="row gap">
+          <button id="playAiBtn" class="btn primary">Jugar vs máquina</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="row between">
+          <h2>Partidas abiertas</h2>
+          <button id="refreshBtn" class="btn ghost small">Actualizar</button>
+        </div>
+        <ul id="openGames" class="gamelist">
+          <li class="empty">Cargando…</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- GAME -->
+    <section id="view-game" class="view hidden">
+      <div class="gamewrap">
+        <div class="boardarea">
+          <div id="board" class="board" aria-label="Tablero de ajedrez"></div>
+          <div id="promo" class="promo hidden">
+            <div class="promo-inner">
+              <p>Elige la pieza</p>
+              <div id="promoButtons" class="promo-buttons"></div>
+            </div>
+          </div>
+        </div>
+
+        <aside class="panel">
+          <div id="players" class="players"></div>
+          <div id="statusText" class="status-text">Cargando…</div>
+          <ol id="movelist" class="movelist"></ol>
+          <div class="actions">
+            <button id="resignBtn" class="btn danger">Rendirse</button>
+            <button id="leaveBtn" class="btn ghost">Salir</button>
+          </div>
+          <div id="share" class="share"></div>
+        </aside>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+  <script src="/js/chess-engine.js"></script>
+  <script src="/js/app.js"></script>
+</body>
+</html>

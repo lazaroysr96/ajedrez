@@ -1,0 +1,22 @@
+{
+  "name": "agedres",
+  "version": "1.0.0",
+  "description": "Ajedrez en linea multijugador (Node + Express + Supabase Realtime)",
+  "main": "server/index.js",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "test": "node test/engine.test.js",
+    "sync:engine": "node scripts/sync-engine.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.4",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.1"
+  }
+}
