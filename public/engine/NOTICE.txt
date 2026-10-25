@@ -1,0 +1,15 @@
+Stockfish.js / Stockfish WASM
+============================
+
+Archivos en este directorio:
+  - stockfish.js
+  - stockfish.wasm
+
+Origen:   https://github.com/nmrugg/stockfish.js  (npm: stockfish@11.0.0)
+Motor:    Stockfish 11 - https://github.com/official-stockfish/Stockfish
+Licencia: GNU General Public License v3.0 (GPLv3)
+Texto:    https://www.gnu.org/licenses/gpl-3.0.txt
+
+Este proyecto usa Stockfish como motor de ajedrez en el navegador (Web Worker).
+Si redistribuyes estos archivos debes mantener la licencia GPLv3 y ofrecer el
+codigo fuente correspondiente.

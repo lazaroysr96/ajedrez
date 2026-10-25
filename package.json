@@ -1,5 +1,5 @@
 {
-  "name": "agedres",
+  "name": "ajedrez",
   "version": "1.0.0",
   "description": "Ajedrez en linea multijugador (Node + Express + Supabase Realtime)",
   "main": "server/index.js",

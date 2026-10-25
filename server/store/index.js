@@ -13,7 +13,7 @@ function createStore() {
   // En Vercel es obligatorio configurar SUPABASE_URL/SUPABASE_ANON_KEY.
   if (process.env.VERCEL) {
     console.error(
-      '[agedres] AVISO: corriendo en Vercel sin Supabase. ' +
+      '[ajedrez] AVISO: corriendo en Vercel sin Supabase. ' +
         'El almacenamiento en memoria es efimero: configura las variables ' +
         'SUPABASE_URL y SUPABASE_ANON_KEY (y SUPABASE_SERVICE_ROLE_KEY).'
     );

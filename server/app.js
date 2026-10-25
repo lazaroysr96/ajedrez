@@ -39,7 +39,7 @@ app.use('/api', function (req, res) {
 });
 
 app.use(function (err, req, res, next) {
-  console.error('[agedres] error:', err && err.message ? err.message : err);
+  console.error('[ajedrez] error:', err && err.message ? err.message : err);
   res.status(500).json({ error: 'Error interno del servidor' });
 });
 

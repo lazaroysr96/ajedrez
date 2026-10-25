@@ -1,4 +1,4 @@
-# AGEDRES · Ajedrez en línea
+# AJEDREZ
 
 Juego de ajedrez multijugador en línea. Backend con **Node + Express** (desplegable como
 función serverless en **Vercel**), persistencia en **Supabase** (Postgres + Realtime) y
@@ -29,7 +29,7 @@ Vercel Serverless Function ──► Supabase (Postgres + Realtime)
 ## Estructura
 
 ```
-AGEDRES/
+AJEDREZ/
 ├── api/index.js                 # Entry serverless de Vercel (exporta la app Express)
 ├── server/
 │   ├── app.js                   # App Express (rutas + estáticos)

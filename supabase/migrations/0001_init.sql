@@ -1,4 +1,4 @@
--- AGEDRES · esquema inicial para Supabase (Postgres)
+-- AJEDREZ · esquema inicial para Supabase (Postgres)
 -- Ejecutar en: Supabase Dashboard -> SQL Editor -> New query -> Run
 
 create extension if not exists "pgcrypto";

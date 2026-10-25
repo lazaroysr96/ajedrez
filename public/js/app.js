@@ -53,12 +53,12 @@
   }
 
   function player() {
-    var id = localStorage.getItem('agedres.id');
+    var id = localStorage.getItem('ajedrez.id');
     if (!id) {
       id = uuid();
-      localStorage.setItem('agedres.id', id);
+      localStorage.setItem('ajedrez.id', id);
     }
-    var name = localStorage.getItem('agedres.name') || '';
+    var name = localStorage.getItem('ajedrez.name') || '';
     return { id: id, name: name };
   }
 
@@ -159,7 +159,7 @@
     state.myColor = null;
     state.selected = null;
     state.legalTargets = [];
-    state.aiLevel = localStorage.getItem('agedres.ai.' + id) || 'medium';
+    state.aiLevel = localStorage.getItem('ajedrez.ai.' + id) || 'medium';
     resetAI();
     els.lobby.classList.add('hidden');
     els.game.classList.remove('hidden');
@@ -348,7 +348,7 @@
   function createGame(color) {
     var me = player();
     var name = currentName();
-    localStorage.setItem('agedres.name', name);
+    localStorage.setItem('ajedrez.name', name);
     api('/games', {
       method: 'POST',
       body: JSON.stringify({ playerId: me.id, playerName: name, color: color }),
@@ -364,13 +364,13 @@
     var name = currentName();
     var level = els.aiLevel.value;
     var color = els.aiColor.value;
-    localStorage.setItem('agedres.name', name);
+    localStorage.setItem('ajedrez.name', name);
     api('/games/vs-ai', {
       method: 'POST',
       body: JSON.stringify({ playerId: me.id, playerName: name, color: color }),
     })
       .then(function (data) {
-        localStorage.setItem('agedres.ai.' + data.game.id, level);
+        localStorage.setItem('ajedrez.ai.' + data.game.id, level);
         location.hash = '#/game/' + data.game.id;
       })
       .catch(function (err) {
@@ -386,7 +386,7 @@
   function joinGame(id, btn) {
     var me = player();
     var name = currentName();
-    localStorage.setItem('agedres.name', name);
+    localStorage.setItem('ajedrez.name', name);
     btn.disabled = true;
     api('/games/' + id + '/join', {
       method: 'POST',
