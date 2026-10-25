@@ -47,6 +47,8 @@ var GAME_COLUMNS = {
   result: 'result',
   winnerId: 'winner_id',
   lastMoveSan: 'last_move_san',
+  createdAt: 'created_at',
+  updatedAt: 'updated_at',
 };
 
 function toGameRow(fields) {
