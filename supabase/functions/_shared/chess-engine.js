@@ -671,5 +671,7 @@
     opposite: opposite,
     colorOf: colorOf,
     typeOf: typeOf,
+    sqFile: sqFile,
+    sqRank: sqRank,
   };
 });

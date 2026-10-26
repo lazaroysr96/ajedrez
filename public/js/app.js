@@ -879,6 +879,27 @@
       return;
     }
 
+    // Permitir enrocar haciendo clic en la torre cuando el rey esta seleccionado.
+    if (state.selected) {
+      var chessSel = currentChess();
+      var selPc = chessSel.get(state.selected);
+      if (selPc && Engine.typeOf(selPc) === 'k' && Engine.colorOf(selPc) === state.myColor) {
+        var clickedPc = chessSel.get(square);
+        if (clickedPc && Engine.typeOf(clickedPc) === 'r' && Engine.colorOf(clickedPc) === state.myColor) {
+          var kingSq = Engine.fromAlgebraic(state.selected);
+          var rookSq = Engine.fromAlgebraic(square);
+          var kingFile = kingSq & 15;
+          var kingRank = kingSq >> 4;
+          var targetFile = (rookSq & 15) > kingFile ? 6 : 2;
+          var targetSq = String.fromCharCode(97 + targetFile) + (8 - kingRank);
+          if (state.legalTargets.indexOf(targetSq) !== -1) {
+            attemptMove(state.selected, targetSq);
+            return;
+          }
+        }
+      }
+    }
+
     var chess = currentChess();
     var pc = chess.get(square);
     if (pc && Engine.colorOf(pc) === state.myColor) {
