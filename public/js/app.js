@@ -44,6 +44,7 @@
     aiLevel: document.getElementById('aiLevel'),
     aiColor: document.getElementById('aiColor'),
     playAiBtn: document.getElementById('playAiBtn'),
+    soundBtn: document.getElementById('soundBtn'),
   };
 
   // ---------------- identidad ----------------
@@ -94,6 +95,144 @@
   function setConn(text, kind) {
     els.conn.textContent = text;
     els.conn.className = 'conn' + (kind ? ' ' + kind : '');
+  }
+
+  var alerts = {
+    ctx: null,
+    enabled: localStorage.getItem('ajedrez.sound') !== 'off',
+    baseTitle: document.title,
+    message: '',
+  };
+
+  function ensureAudio() {
+    if (alerts.ctx) return alerts.ctx;
+    var Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return null;
+    alerts.ctx = new Ctx();
+    return alerts.ctx;
+  }
+
+  function unlockAudio() {
+    var ctx = ensureAudio();
+    if (ctx && ctx.state === 'suspended') ctx.resume();
+  }
+
+  function tone(ctx, freq, offset, duration, type, volume) {
+    var start = ctx.currentTime + offset;
+    var osc = ctx.createOscillator();
+    var gain = ctx.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, start);
+    gain.gain.setValueAtTime(0.0001, start);
+    gain.gain.exponentialRampToValueAtTime(volume, start + 0.012);
+    gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(start);
+    osc.stop(start + duration + 0.03);
+  }
+
+  function playAlert(kind) {
+    if (!alerts.enabled) return;
+    var ctx = ensureAudio();
+    if (!ctx) return;
+    if (ctx.state === 'suspended') ctx.resume();
+    if (kind === 'join') {
+      tone(ctx, 659.25, 0, 0.16, 'triangle', 0.09);
+      tone(ctx, 987.77, 0.12, 0.24, 'triangle', 0.1);
+    } else if (kind === 'end') {
+      tone(ctx, 523.25, 0, 0.2, 'triangle', 0.09);
+      tone(ctx, 392, 0.16, 0.32, 'triangle', 0.09);
+    } else {
+      tone(ctx, 880, 0, 0.11, 'sine', 0.09);
+      tone(ctx, 1174.66, 0.07, 0.18, 'sine', 0.07);
+    }
+  }
+
+  function updateSoundButton() {
+    els.soundBtn.textContent = alerts.enabled ? 'Sonido: sí' : 'Sonido: no';
+    els.soundBtn.setAttribute('aria-pressed', String(alerts.enabled));
+  }
+
+  function toggleSound() {
+    alerts.enabled = !alerts.enabled;
+    localStorage.setItem('ajedrez.sound', alerts.enabled ? 'on' : 'off');
+    updateSoundButton();
+    if (alerts.enabled) playAlert('move');
+  }
+
+  function isWatchingGame() {
+    return Boolean(state.gameId) &&
+      !document.hidden &&
+      document.hasFocus() &&
+      !els.game.classList.contains('hidden');
+  }
+
+  function showTitleAlert(message) {
+    alerts.message = message;
+    document.title = '● ' + message + ' · AJEDREZ';
+  }
+
+  function clearTitleAlert() {
+    if (!alerts.message) return;
+    alerts.message = '';
+    document.title = alerts.baseTitle;
+  }
+
+  function notifyEvent(message, kind, force) {
+    if (isWatchingGame()) {
+      if (!force) return;
+      playAlert(kind);
+      toast(message);
+      return;
+    }
+    showTitleAlert(message);
+    playAlert(kind);
+  }
+
+  function opponentName(game) {
+    var me = player().id;
+    var g = game || state.game;
+    if (!g) return 'El rival';
+    if (g.whiteId === me) return g.blackName || 'El rival';
+    if (g.blackId === me) return g.whiteName || 'El rival';
+    return 'El rival';
+  }
+
+  function detectGameChange(prev, next) {
+    if (!prev || !next || prev.id !== next.id) return;
+    var me = player().id;
+    if (next.whiteId !== me && next.blackId !== me) return;
+
+    if (prev.status === 'waiting' && next.status === 'active') {
+      notifyEvent(opponentName(next) + ' se unió a la partida', 'join', true);
+    } else if (prev.status === 'active' && next.status === 'finished') {
+      var msg;
+      if (next.result === 'draw') msg = 'Tablas.';
+      else if (next.winnerId === me) msg = '¡Ganaste!';
+      else msg = 'Perdiste.';
+      notifyEvent(msg, 'end', true);
+    }
+  }
+
+  function maybeNotifyMove(move) {
+    if (!state.myColor || !move || move.color === state.myColor) return;
+    notifyEvent(opponentName() + ' jugó ' + move.san + ' · Tu turno', 'move', false);
+  }
+
+  function detectNewMoves(prevMoves, nextMoves) {
+    var known = {};
+    prevMoves.forEach(function (m) { known[m.ply] = true; });
+    var last = null;
+    nextMoves.forEach(function (m) {
+      if (!known[m.ply]) last = m;
+    });
+    if (last) maybeNotifyMove(last);
+  }
+
+  function onAttention() {
+    clearTitleAlert();
+    if (state.gameId && state.mode === 'online') refreshGame(state.gameId);
   }
 
   function mapGame(row) {
@@ -277,6 +416,7 @@
     }
 
     render();
+    maybeNotifyMove(state.moves[state.moves.length - 1]);
     return true;
   }
 
@@ -284,9 +424,15 @@
   function refreshGame(id) {
     return api('/games/' + id)
       .then(function (data) {
+        var prevGame = state.game;
+        var prevMoves = state.moves;
         state.game = data.game;
         state.moves = (data.moves || []).slice().sort(function (a, b) { return a.ply - b.ply; });
         updateMyColor();
+        if (prevGame) {
+          detectGameChange(prevGame, state.game);
+          detectNewMoves(prevMoves, state.moves);
+        }
         render();
       })
       .catch(function (err) {
@@ -461,9 +607,10 @@
 
   function addMove(move) {
     var exists = state.moves.some(function (m) { return m.ply === move.ply; });
-    if (exists) return;
+    if (exists) return false;
     state.moves.push(move);
     state.moves.sort(function (a, b) { return a.ply - b.ply; });
+    return true;
   }
 
   // ---------------- realtime ----------------
@@ -489,12 +636,23 @@
       .on(
         'postgres_changes',
         { event: 'UPDATE', schema: 'public', table: 'games', filter: 'id=eq.' + id },
-        function (payload) { state.game = mapGame(payload.new); updateMyColor(); render(); }
+        function (payload) {
+          var prev = state.game;
+          var next = mapGame(payload.new);
+          state.game = next;
+          updateMyColor();
+          detectGameChange(prev, next);
+          render();
+        }
       )
       .on(
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'moves', filter: 'game_id=eq.' + id },
-        function (payload) { addMove(mapMove(payload.new)); render(); }
+        function (payload) {
+          var move = mapMove(payload.new);
+          if (addMove(move)) maybeNotifyMove(move);
+          render();
+        }
       )
       .subscribe(function (status) {
         if (status === 'SUBSCRIBED') setConn('en línea · tiempo real', 'ok');
@@ -956,6 +1114,14 @@
     els.resignBtn.addEventListener('click', resign);
 
     els.nameInput.value = player().name;
+    els.soundBtn.addEventListener('click', toggleSound);
+    updateSoundButton();
+    document.addEventListener('pointerdown', unlockAudio);
+    document.addEventListener('keydown', unlockAudio);
+    document.addEventListener('visibilitychange', function () {
+      if (!document.hidden) onAttention();
+    });
+    window.addEventListener('focus', onAttention);
     window.addEventListener('hashchange', route);
   }
 
