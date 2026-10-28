@@ -61,9 +61,21 @@
 
       <div class="card">
         <div class="row between">
+          <h2>Mis partidas</h2>
+          <button id="refreshMineBtn" class="btn ghost small">Actualizar</button>
+        </div>
+        <p class="card-hint">Partidas en las que participas. Puedes volver a ellas aunque cierres el navegador.</p>
+        <ul id="myGames" class="gamelist">
+          <li class="empty">Cargando…</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <div class="row between">
           <h2>Partidas abiertas</h2>
           <button id="refreshBtn" class="btn ghost small">Actualizar</button>
         </div>
+        <p class="card-hint">Salas de otros jugadores esperando rival.</p>
         <ul id="openGames" class="gamelist">
           <li class="empty">Cargando…</li>
         </ul>

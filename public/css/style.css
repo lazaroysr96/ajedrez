@@ -146,6 +146,27 @@ h2 { font-size: 16px; margin: 0; }
 .gamelist .who { font-size: 14px; }
 .gamelist .who b { color: var(--text); }
 .gamelist .who small { color: var(--muted); display: block; margin-top: 2px; }
+.gamelist .game-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  flex-shrink: 0;
+  justify-content: flex-end;
+}
+.gamelist li.mine-item {
+  background: rgba(108, 140, 255, 0.08);
+  border-color: rgba(108, 140, 255, 0.25);
+}
+.gamelist .mine-status.turn { color: var(--accent); font-weight: 600; }
+.gamelist .mine-status.wait { color: var(--muted); }
+.gamelist .mine-status.ended { color: var(--muted); }
+
+.card-hint {
+  margin: 0 0 4px;
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.45;
+}
 
 /* ---------- juego ---------- */
 .gamewrap {
@@ -337,3 +358,8 @@ h2 { font-size: 16px; margin: 0; }
   z-index: 50;
   box-shadow: 0 10px 30px rgba(0,0,0,.4);
 }
+
+.game-actions { display: flex; gap: 6px; }
+.mine-status.turn { color: #79e0a0; }
+.mine-status.wait { color: #f2c94c; }
+.mine-status.ended { color: var(--muted); }

@@ -26,7 +26,7 @@
     localConfig: null,
   };
 
-  var els = {
+var els = {
     lobby: document.getElementById('view-lobby'),
     game: document.getElementById('view-game'),
     board: document.getElementById('board'),
@@ -37,6 +37,7 @@
     movelist: document.getElementById('movelist'),
     share: document.getElementById('share'),
     openGames: document.getElementById('openGames'),
+    myGames: document.getElementById('myGames'),
     conn: document.getElementById('conn'),
     toast: document.getElementById('toast'),
     nameInput: document.getElementById('nameInput'),
@@ -230,9 +231,141 @@
     if (last) maybeNotifyMove(last);
   }
 
+  var SAVED_GAMES_KEY = 'ajedrez.games';
+  var MAX_SAVED_GAMES = 30;
+
+  function readSavedGames() {
+    try {
+      var raw = localStorage.getItem(SAVED_GAMES_KEY);
+      var list = raw ? JSON.parse(raw) : [];
+      if (!Array.isArray(list)) return [];
+      return list.map(function (item) {
+        if (typeof item === 'string') return item;
+        return item && item.id;
+      }).filter(Boolean);
+    } catch (e) {
+      return [];
+    }
+  }
+
+  function writeSavedGames(ids) {
+    try { localStorage.setItem(SAVED_GAMES_KEY, JSON.stringify(ids)); } catch (e) {}
+  }
+
+  function rememberGame(id) {
+    if (!id || id.indexOf('local-') === 0) return;
+    var ids = readSavedGames().filter(function (gid) { return gid !== id; });
+    ids.unshift(id);
+    writeSavedGames(ids.slice(0, MAX_SAVED_GAMES));
+  }
+
+  function forgetGame(id) {
+    writeSavedGames(readSavedGames().filter(function (gid) { return gid !== id; }));
+  }
+
+  function shortDate(iso) {
+    if (!iso) return '';
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return '';
+    return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+
+  function myGameStatus(game, me) {
+    if (game.status === 'waiting') return { text: 'Esperando rival', kind: 'wait' };
+    if (game.status === 'finished') {
+      if (game.result === 'draw') return { text: 'Tablas · finalizada', kind: 'ended' };
+      if (game.winnerId === me) return { text: 'Ganaste · finalizada', kind: 'ended' };
+      if (game.whiteId === me || game.blackId === me) return { text: 'Perdiste · finalizada', kind: 'ended' };
+      return { text: 'Finalizada', kind: 'ended' };
+    }
+    var myColor = game.whiteId === me ? 'w' : game.blackId === me ? 'b' : null;
+    if (!myColor) return { text: 'En curso', kind: '' };
+    return game.turn === myColor ? { text: 'Tu turno', kind: 'turn' } : { text: 'Turno del rival', kind: '' };
+  }
+
+  function myGameItem(game, me) {
+    var li = document.createElement('li');
+    var who = document.createElement('div');
+    who.className = 'who';
+
+    var rival = game.whiteId === me ? game.blackName : game.whiteName;
+    var rivalLabel = rival && (game.whiteId && game.blackId) ? rival : 'Esperando rival…';
+    var b = document.createElement('b');
+    b.textContent = rivalLabel;
+    who.appendChild(b);
+
+    var statusInfo = myGameStatus(game, me);
+    var small = document.createElement('small');
+    small.className = 'mine-status ' + statusInfo.kind;
+    small.textContent = statusInfo.text + ' · ' + shortDate(game.updatedAt);
+    who.appendChild(small);
+
+    var created = document.createElement('small');
+    created.className = 'muted';
+    created.style.display = 'block';
+    created.style.marginTop = '2px';
+    created.textContent = 'Creada ' + shortDate(game.createdAt);
+    who.appendChild(created);
+
+    var actions = document.createElement('div');
+    actions.className = 'game-actions';
+    var openBtn = document.createElement('button');
+    openBtn.className = 'btn small primary';
+    openBtn.textContent = game.status === 'finished' ? 'Ver' : 'Continuar';
+    openBtn.addEventListener('click', function () { location.hash = '#/game/' + game.id; });
+    var rmBtn = document.createElement('button');
+    rmBtn.className = 'btn small ghost';
+    rmBtn.textContent = 'Quitar';
+    rmBtn.title = 'Quitar de la lista (la partida sigue existiendo)';
+    rmBtn.addEventListener('click', function () { forgetGame(game.id); loadMyGames(); });
+    actions.appendChild(openBtn);
+    actions.appendChild(rmBtn);
+
+    li.appendChild(who);
+    li.appendChild(actions);
+    return li;
+  }
+
+  function loadMyGames() {
+    var ids = readSavedGames();
+    if (!ids.length) {
+      els.myGames.innerHTML = '<li class="empty">Aún no tienes partidas guardadas. Crea o únete a una y aparecerá aquí.</li>';
+      return;
+    }
+    els.myGames.innerHTML = '<li class="empty">Cargando…</li>';
+    var me = player().id;
+    Promise.all(ids.map(function (id) {
+      return api('/games/' + id).then(function (data) {
+        return { id: id, game: data.game, moves: data.moves || [] };
+      }).catch(function (err) {
+        if (err.status === 404) forgetGame(id);
+        return { id: id, error: err };
+      });
+    })).then(function (rows) {
+      var valid = rows.filter(function (r) { return r.game; });
+      valid.sort(function (a, b) {
+        return new Date(b.game.updatedAt || 0) - new Date(a.game.updatedAt || 0);
+      });
+      if (!valid.length) {
+        els.myGames.innerHTML = '<li class="empty">Aún no tienes partidas guardadas. Crea o únete a una y aparecerá aquí.</li>';
+        return;
+      }
+      els.myGames.innerHTML = '';
+      valid.forEach(function (row) { els.myGames.appendChild(myGameItem(row.game, me)); });
+      var errors = rows.filter(function (r) { return r.error && r.error.status !== 404; });
+      if (errors.length) {
+        var li = document.createElement('li');
+        li.className = 'empty';
+        li.textContent = 'Algunas partidas no se pudieron cargar (revisa la conexión).';
+        els.myGames.insertBefore(li, els.myGames.firstChild);
+      }
+    });
+  }
+
   function onAttention() {
     clearTitleAlert();
     if (state.gameId && state.mode === 'online') refreshGame(state.gameId);
+    if (!state.gameId && !els.lobby.classList.contains('hidden')) loadMyGames();
   }
 
   function mapGame(row) {
@@ -286,6 +419,7 @@
     els.lobby.classList.remove('hidden');
     setConn(state.config && state.config.realtime ? 'en línea' : 'local', state.config && state.config.realtime ? 'ok' : 'warn');
     loadOpenGames();
+    loadMyGames();
   }
 
   function openGame(id) {
@@ -306,6 +440,7 @@
     els.status.className = 'status-text';
 
     refreshGame(id).then(function () {
+      if (state.game && state.myColor) rememberGame(id);
       subscribeGame(id);
     });
   }
@@ -466,6 +601,12 @@
           var who = document.createElement('div');
           who.className = 'who';
           who.innerHTML = '<b>' + escapeHtml(host || 'Anónimo') + '</b> espera <small>juega con ' + color + '</small>';
+          var created = document.createElement('small');
+          created.className = 'muted';
+          created.style.display = 'block';
+          created.style.marginTop = '4px';
+          created.textContent = 'Creada ' + shortDate(g.createdAt);
+          who.appendChild(created);
           var btn = document.createElement('button');
           btn.className = 'btn small primary';
           btn.textContent = 'Unirse';
@@ -1110,6 +1251,7 @@
     document.getElementById('createRandomBtn').addEventListener('click', function () { createGame('random'); });
     els.playAiBtn.addEventListener('click', createVsAi);
     document.getElementById('refreshBtn').addEventListener('click', loadOpenGames);
+    document.getElementById('refreshMineBtn').addEventListener('click', loadMyGames);
     document.getElementById('leaveBtn').addEventListener('click', function () { location.hash = '#/'; });
     els.resignBtn.addEventListener('click', resign);
 
@@ -1118,6 +1260,9 @@
     updateSoundButton();
     document.addEventListener('pointerdown', unlockAudio);
     document.addEventListener('keydown', unlockAudio);
+    window.addEventListener('storage', function (e) {
+      if (e.key === SAVED_GAMES_KEY && !els.lobby.classList.contains('hidden')) loadMyGames();
+    });
     document.addEventListener('visibilitychange', function () {
       if (!document.hidden) onAttention();
     });
