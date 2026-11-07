@@ -442,6 +442,10 @@ var els = {
     refreshGame(id).then(function () {
       if (state.game && state.myColor) rememberGame(id);
       subscribeGame(id);
+      if (window.ChatPanel && state.supabase) {
+        var me = player();
+        ChatPanel.init(id, me.id, me.name, state.supabase);
+      }
     });
   }
 
@@ -453,6 +457,9 @@ var els = {
     if (state.poll) {
       clearInterval(state.poll);
       state.poll = null;
+    }
+    if (window.ChatPanel) {
+      ChatPanel.destroy();
     }
     state.gameId = null;
     state.game = null;
