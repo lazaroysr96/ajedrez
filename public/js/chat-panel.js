@@ -16,6 +16,8 @@
     myKeyPair: null,           // {publicKey, privateKey}
     peerKeys: {},              // playerId -> publicKey (Uint8Array)
     messages: [],              // {id, player_id, player_name, content, version, nonce, created_at, decrypted, encrypted}
+    ownPlaintext: {},          // messageId -> texto propio (cifrado para el rival)
+    ownPlaintextKey: null,
     supabase: null,
     msgChannel: null,
     keyChannel: null,
@@ -25,6 +27,8 @@
     consentGiven: false,
   };
 
+  var MAX_OWN_PLAINTEXT = 100;
+
   // ─────────────────────────────────────────────────────────────
   // Inicialización
   // ─────────────────────────────────────────────────────────────
@@ -32,7 +36,9 @@
     chatState.gameId = gameId;
     chatState.myPlayerId = playerId;
     chatState.myPlayerName = playerName;
-    chatState.supabase = supabaseClient;
+    chatState.supabase = supabaseClient || null;
+    chatState.ownPlaintextKey = 'ajedrez.chat.own.' + gameId;
+    loadOwnPlaintext();
 
     if (!chatState.consentGiven) {
       chatState.consentGiven = AjedrezChat.hasChatConsent();
@@ -40,11 +46,23 @@
 
     buildUI();
     bindEvents();
-    loadKeyPair().then(function () {
-      subscribeRealtime();
-      fetchHistory();
-      startPollingFallback();
-    });
+    loadKeyPair()
+      .then(function () {
+        if (chatState.consentGiven) return publishMyPublicKey();
+      })
+      .then(function () {
+        return fetchPeerKeys();
+      })
+      .then(function () {
+        subscribeRealtime();
+        return fetchHistory();
+      })
+      .then(function () {
+        startPollingFallback();
+      })
+      .catch(function (e) {
+        console.error('Error inicializando chat:', e);
+      });
   }
 
   function destroy() {
@@ -63,6 +81,8 @@
       myKeyPair: null,
       peerKeys: {},
       messages: [],
+      ownPlaintext: {},
+      ownPlaintextKey: null,
       supabase: null,
       msgChannel: null,
       keyChannel: null,
@@ -71,6 +91,34 @@
       isOpen: false,
       consentGiven: false,
     };
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // Caché local del texto propio cifrado
+  // ─────────────────────────────────────────────────────────────
+  function loadOwnPlaintext() {
+    chatState.ownPlaintext = {};
+    if (!chatState.ownPlaintextKey) return;
+    try {
+      var raw = localStorage.getItem(chatState.ownPlaintextKey);
+      chatState.ownPlaintext = raw ? JSON.parse(raw) : {};
+    } catch (e) {
+      chatState.ownPlaintext = {};
+    }
+  }
+
+  function saveOwnPlaintext(messageId, text) {
+    if (!chatState.ownPlaintextKey || messageId == null) return;
+    chatState.ownPlaintext[String(messageId)] = text;
+    var ids = Object.keys(chatState.ownPlaintext);
+    while (ids.length > MAX_OWN_PLAINTEXT) {
+      delete chatState.ownPlaintext[ids.shift()];
+    }
+    try {
+      localStorage.setItem(chatState.ownPlaintextKey, JSON.stringify(chatState.ownPlaintext));
+    } catch (e) {
+      // almacenamiento lleno o no disponible: el chat sigue funcionando
+    }
   }
 
   // ─────────────────────────────────────────────────────────────
@@ -246,17 +294,16 @@
     chatState.keyChannel = sb
       .channel('chat-keys-' + gid)
       .on('postgres_changes', {
-        event: 'INSERT',
+        event: '*',
         schema: 'public',
         table: 'game_keys',
         filter: 'game_id=eq.' + gid,
       }, function (payload) {
         var row = payload.new;
-        if (row.player_id !== chatState.myPlayerId) {
-          var pk = AjedrezChat.b64ToBytes(row.public_key);
-          chatState.peerKeys[row.player_id] = pk;
-          AjedrezChat.setPeerPublicKey(gid, row.player_id, pk);
-        }
+        if (!row || row.player_id === chatState.myPlayerId) return;
+        var pk = AjedrezChat.b64ToBytes(row.public_key);
+        chatState.peerKeys[row.player_id] = pk;
+        AjedrezChat.setPeerPublicKey(gid, row.player_id, pk);
       })
       .subscribe();
   }
@@ -268,9 +315,9 @@
     try {
       var res = await api('/games/' + chatState.gameId + '/messages?limit=100');
       chatState.messages = (res.messages || []).map(normalizeMessage);
+      await fetchPeerKeys();
       await decryptAllMessages();
       renderMessages();
-      await fetchPeerKeys();
     } catch (e) {
       console.error('Error cargando historial:', e);
     }
@@ -316,7 +363,12 @@
   }
 
   async function decryptMessage(msg) {
-    if (msg.player_id === chatState.myPlayerId) return msg.content;
+    if (msg.player_id === chatState.myPlayerId) {
+      if (msg.version === 1) {
+        return chatState.ownPlaintext[String(msg.id)] || '[Mensaje cifrado enviado]';
+      }
+      return msg.content;
+    }
     if (msg.version === 0) return msg.content;
     var peerKey = chatState.peerKeys[msg.player_id];
     if (!peerKey) {
@@ -324,7 +376,11 @@
       if (peerKey) chatState.peerKeys[msg.player_id] = peerKey;
     }
     if (!peerKey) return '[Cifrado - clave del rival no disponible]';
-    return await AjedrezChat.decryptMessage(msg, chatState.myKeyPair.privateKey, peerKey);
+    try {
+      return await AjedrezChat.decryptMessage(msg, chatState.myKeyPair.privateKey, peerKey);
+    } catch (e) {
+      return '[No se pudo descifrar]';
+    }
   }
 
   async function sendMessage() {
@@ -361,7 +417,7 @@
     var payload = prepared[0] || { version: 0, content: text, nonce: null };
 
     try {
-      await api('/games/' + chatState.gameId + '/messages', {
+      var created = await api('/games/' + chatState.gameId + '/messages', {
         method: 'POST',
         body: JSON.stringify({
           playerId: chatState.myPlayerId,
@@ -371,6 +427,12 @@
           nonce: payload.nonce,
         }),
       });
+      if (payload.version === 1 && created && created.message) {
+        saveOwnPlaintext(created.message.id, text);
+        optimistic.id = created.message.id;
+        optimistic.version = 1;
+        optimistic.encrypted = true;
+      }
     } catch (e) {
       console.error('Error enviando mensaje:', e);
       chatState.messages.pop();
@@ -409,7 +471,7 @@
 
   function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, function (c) {
-      return { '&': '&', '<': '<', '>': '>', '"': '"', "'": '&apos;' }[c];
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
     });
   }
 

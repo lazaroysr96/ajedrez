@@ -442,7 +442,7 @@ var els = {
     refreshGame(id).then(function () {
       if (state.game && state.myColor) rememberGame(id);
       subscribeGame(id);
-      if (window.ChatPanel && state.supabase) {
+      if (window.ChatPanel) {
         var me = player();
         ChatPanel.init(id, me.id, me.name, state.supabase);
       }

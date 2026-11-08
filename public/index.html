@@ -5,14 +5,24 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>AJEDREZ · Juega en línea</title>
   <meta name="description" content="Juega ajedrez en línea contra otras personas en tiempo real." />
+  <meta name="theme-color" content="#12141a" />
+  <meta name="color-scheme" content="dark" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Ajedrez" />
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
+  <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png" />
   <link rel="icon" type="image/jpeg" href="/icon.jpg" />
-  <link rel="apple-touch-icon" href="/icon.jpg" />
+  <link rel="apple-touch-icon" href="/icons/icon-180.png" />
   <link rel="stylesheet" href="/css/style.css" />
 </head>
 <body>
   <header class="topbar">
     <a class="brand" href="#/">AJEDREZ <span>juega en línea</span></a>
     <div class="topbar-right">
+      <button id="installBtn" class="btn ghost small hidden" type="button">Instalar</button>
       <button id="soundBtn" class="btn ghost small" type="button">Sonido: sí</button>
       <div id="conn" class="conn">—</div>
     </div>
@@ -117,5 +127,6 @@
   <script src="/js/chat-types.js"></script>
   <script src="/js/chat-panel.js"></script>
   <script src="/js/app.js"></script>
+  <script src="/js/pwa.js"></script>
 </body>
 </html>

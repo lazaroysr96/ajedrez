@@ -537,3 +537,12 @@ h2 { font-size: 16px; margin: 0; }
   }
   .chat-toggle { right: 16px; bottom: 16px; }
 }
+
+/* ── PWA ─────────────────────────────────────────────────── */
+@media (display-mode: standalone) {
+  .topbar {
+    padding-top: calc(14px + env(safe-area-inset-top, 0px));
+    padding-left: calc(22px + env(safe-area-inset-left, 0px));
+    padding-right: calc(22px + env(safe-area-inset-right, 0px));
+  }
+}
