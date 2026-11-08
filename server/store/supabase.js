@@ -36,6 +36,30 @@ function toMove(row) {
   };
 }
 
+function toChatMessage(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    gameId: row.game_id,
+    playerId: row.player_id,
+    playerName: row.player_name,
+    content: row.content,
+    version: row.version,
+    nonce: row.nonce,
+    createdAt: row.created_at,
+  };
+}
+
+function toGameKey(row) {
+  if (!row) return null;
+  return {
+    gameId: row.game_id,
+    playerId: row.player_id,
+    publicKey: row.public_key,
+    createdAt: row.created_at,
+  };
+}
+
 var GAME_COLUMNS = {
   whiteId: 'white_id',
   whiteName: 'white_name',
@@ -150,6 +174,72 @@ SupabaseStore.prototype.getMoves = function (gameId) {
     .then(function (res) {
       if (res.error) throw new Error(res.error.message);
       return (res.data || []).map(toMove);
+    });
+};
+
+// ─────────────────────────────────────────────────────────────
+// Chat
+// ─────────────────────────────────────────────────────────────
+
+SupabaseStore.prototype.addGameMessage = function (msg) {
+  var row = {
+    game_id: msg.gameId,
+    player_id: msg.playerId,
+    player_name: msg.playerName,
+    content: msg.content,
+    version: msg.version || 0,
+    nonce: msg.nonce,
+  };
+  return this.client
+    .from('game_messages')
+    .insert(row)
+    .select('*')
+    .single()
+    .then(function (res) {
+      if (res.error) throw new Error(res.error.message);
+      return toChatMessage(res.data);
+    });
+};
+
+SupabaseStore.prototype.getGameMessages = function (gameId, limit) {
+  limit = limit || 100;
+  return this.client
+    .from('game_messages')
+    .select('*')
+    .eq('game_id', gameId)
+    .order('created_at', { ascending: false })
+    .limit(limit)
+    .then(function (res) {
+      if (res.error) throw new Error(res.error.message);
+      return (res.data || []).reverse().map(toChatMessage);
+    });
+};
+
+SupabaseStore.prototype.upsertGameKey = function (key) {
+  var row = {
+    game_id: key.gameId,
+    player_id: key.playerId,
+    public_key: key.publicKey,
+  };
+  return this.client
+    .from('game_keys')
+    .upsert(row, { onConflict: 'game_id,player_id' })
+    .select('*')
+    .single()
+    .then(function (res) {
+      if (res.error) throw new Error(res.error.message);
+      return toGameKey(res.data);
+    });
+};
+
+SupabaseStore.prototype.getGameKeys = function (gameId) {
+  return this.client
+    .from('game_keys')
+    .select('*')
+    .eq('game_id', gameId)
+    .then(function (res) {
+      if (res.error) throw new Error(res.error.message);
+      return (res.data || []).map(toGameKey);
     });
 };
 

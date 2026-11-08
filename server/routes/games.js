@@ -264,6 +264,127 @@ function createGameRoutes(store) {
       .catch(next);
   });
 
+  // ─────────────────────────────────────────────────────────────
+  // Chat
+  // ─────────────────────────────────────────────────────────────
+
+  function isParticipant(game, playerId) {
+    return game.whiteId === playerId || game.blackId === playerId;
+  }
+
+  function cleanMessage(text) {
+    return String(text || '').trim().slice(0, 500);
+  }
+
+  // Obtener mensajes de una partida
+  router.get('/games/:id/messages', function (req, res, next) {
+    var limit = Math.min(parseInt(req.query.limit) || 100, 200);
+    store
+      .getGame(req.params.id)
+      .then(function (game) {
+        if (!game) return res.status(404).json({ error: 'Partida no encontrada' });
+        var playerId = String(req.query.playerId || '').trim();
+        if (playerId && !isParticipant(game, playerId)) {
+          return res.status(403).json({ error: 'No participas en esta partida' });
+        }
+        return store.getGameMessages(req.params.id, limit);
+      })
+      .then(function (messages) {
+        res.json({ messages: messages });
+      })
+      .catch(next);
+  });
+
+  // Enviar mensaje
+  router.post('/games/:id/messages', function (req, res, next) {
+    var body = req.body || {};
+    var playerId = String(body.playerId || '').trim();
+    var playerName = cleanName(body.playerName, 'Jugador');
+    var content = String(body.content || '');
+    var version = body.version === 1 ? 1 : 0;
+    var nonce = version === 1 ? String(body.nonce || '') : null;
+
+    if (!playerId) return res.status(400).json({ error: 'playerId requerido' });
+    if (!content) return res.status(400).json({ error: 'Contenido requerido' });
+    if (version === 1 && !nonce) return res.status(400).json({ error: 'Nonce requerido para mensajes cifrados' });
+    if (content.length > 2000) return res.status(400).json({ error: 'Mensaje demasiado largo' });
+
+    store
+      .getGame(req.params.id)
+      .then(function (game) {
+        if (!game) return res.status(404).json({ error: 'Partida no encontrada' });
+        if (!isParticipant(game, playerId)) {
+          return res.status(403).json({ error: 'No participas en esta partida' });
+        }
+        var msg = {
+          gameId: game.id,
+          playerId: playerId,
+          playerName: playerName,
+          content: content,
+          version: version,
+          nonce: nonce,
+          createdAt: new Date().toISOString(),
+        };
+        return store.addGameMessage(msg);
+      })
+      .then(function (msg) {
+        res.status(201).json({ message: msg });
+      })
+      .catch(next);
+  });
+
+  // Obtener claves públicas
+  router.get('/games/:id/keys', function (req, res, next) {
+    store
+      .getGame(req.params.id)
+      .then(function (game) {
+        if (!game) return res.status(404).json({ error: 'Partida no encontrada' });
+        return store.getGameKeys(req.params.id);
+      })
+      .then(function (keys) {
+        res.json({ keys: keys });
+      })
+      .catch(next);
+  });
+
+  // Publicar/actualizar clave pública
+  router.post('/games/:id/keys', function (req, res, next) {
+    var body = req.body || {};
+    var playerId = String(body.playerId || '').trim();
+    var publicKey = String(body.publicKey || '').trim();
+
+    if (!playerId) return res.status(400).json({ error: 'playerId requerido' });
+    if (!publicKey) return res.status(400).json({ error: 'publicKey requerido' });
+
+    // Validar longitud base64 (~44 chars para 32 bytes)
+    try {
+      var buf = Buffer.from(publicKey, 'base64');
+      if (buf.length !== 32) throw new Error();
+    } catch (e) {
+      return res.status(400).json({ error: 'publicKey inválido (debe ser 32 bytes base64)' });
+    }
+
+    store
+      .getGame(req.params.id)
+      .then(function (game) {
+        if (!game) return res.status(404).json({ error: 'Partida no encontrada' });
+        if (!isParticipant(game, playerId)) {
+          return res.status(403).json({ error: 'No participas en esta partida' });
+        }
+        var key = {
+          gameId: game.id,
+          playerId: playerId,
+          publicKey: publicKey,
+          createdAt: new Date().toISOString(),
+        };
+        return store.upsertGameKey(key);
+      })
+      .then(function (key) {
+        res.json({ key: key });
+      })
+      .catch(next);
+  });
+
   return router;
 }
 

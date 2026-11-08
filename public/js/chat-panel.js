@@ -1,6 +1,7 @@
 /**
  * ChatPanel - Panel de chat lateral para la partida
  * Requiere: chat-types.js cargado antes (AjedrezChat)
+ * Usa API REST para escrituras, Realtime para actualizaciones en vivo
  */
 (function () {
   'use strict';
@@ -47,9 +48,14 @@
   }
 
   function destroy() {
-    if (chatState.msgChannel) chatState.supabase.removeChannel(chatState.msgChannel);
-    if (chatState.keyChannel) chatState.supabase.removeChannel(chatState.keyChannel);
+    if (chatState.msgChannel && chatState.supabase) chatState.supabase.removeChannel(chatState.msgChannel);
+    if (chatState.keyChannel && chatState.supabase) chatState.supabase.removeChannel(chatState.keyChannel);
     if (chatState.pollTimer) clearInterval(chatState.pollTimer);
+    // Eliminar elementos DOM
+    var panel = document.getElementById('chat-panel');
+    var toggle = document.getElementById('chat-toggle');
+    if (panel) panel.remove();
+    if (toggle) toggle.remove();
     chatState = {
       gameId: null,
       myPlayerId: null,
@@ -71,7 +77,6 @@
   // UI Construction
   // ─────────────────────────────────────────────────────────────
   function buildUI() {
-    // Panel principal (inicialmente oculto)
     var panel = document.createElement('div');
     panel.id = 'chat-panel';
     panel.className = 'chat-panel hidden';
@@ -82,9 +87,9 @@
       '</div>' +
       '<div id="chat-consent" class="chat-consent hidden">' +
       '  <div class="consent-content">' +
-      '    <h4>⚠️ Chat sin cifrado</h4>' +
-      '    <p>Los mensajes se transmiten y almacenan en <strong>texto plano</strong> en el servidor.</p>' +
-      '    <p>No escribas contraseñas, datos personales, bancarios ni información sensible.</p>' +
+      '    <h4>⚠️ Chat</h4>' +
+      '    <p>Los mensajes se transmiten al servidor. Con cifrado E2E, el contenido viaja cifrado para tu rival.</p>' +
+      '    <p>⚠ <strong>No escribas contraseñas, datos personales, bancarios ni información sensible.</strong></p>' +
       '    <label class="consent-check">' +
       '      <input type="checkbox" id="consent-checkbox" required> ' +
       '      Confirmo que tengo <strong>18 años</strong> y entiendo lo anterior.' +
@@ -102,7 +107,6 @@
       '</div>';
     document.body.appendChild(panel);
 
-    // Botón flotante para abrir/cerrar
     var toggle = document.createElement('button');
     toggle.id = 'chat-toggle';
     toggle.className = 'chat-toggle';
@@ -110,7 +114,6 @@
     toggle.innerHTML = '💬';
     document.body.appendChild(toggle);
 
-    // Referencias
     chatState.elements = {
       panel: panel,
       toggle: toggle,
@@ -141,7 +144,6 @@
       sendMessage();
     });
 
-    // Cerrar con Escape
     document.addEventListener('keydown', function (e) {
       if (e.key === 'Escape' && chatState.isOpen) closePanel();
     });
@@ -184,7 +186,6 @@
     chatState.consentGiven = true;
     AjedrezChat.setChatConsent(true);
     showChat();
-    // Publicar mi clave pública para E2E
     publishMyPublicKey();
   }
 
@@ -197,38 +198,39 @@
 
   async function publishMyPublicKey() {
     var pubB64 = AjedrezChat.bytesToB64(chatState.myKeyPair.publicKey);
-    var sb = chatState.supabase;
-    // Upsert en game_keys
-    await sb.from('game_keys').upsert({
-      game_id: chatState.gameId,
-      player_id: chatState.myPlayerId,
-      public_key: pubB64,
-    }, { onConflict: 'game_id,player_id' });
+    try {
+      await api('/games/' + chatState.gameId + '/keys', {
+        method: 'POST',
+        body: JSON.stringify({ playerId: chatState.myPlayerId, publicKey: pubB64 }),
+      });
+    } catch (e) {
+      console.error('Error publicando clave:', e);
+    }
   }
 
   async function fetchPeerKeys() {
-    var sb = chatState.supabase;
-    var { data, error } = await sb
-      .from('game_keys')
-      .select('player_id, public_key')
-      .eq('game_id', chatState.gameId)
-      .neq('player_id', chatState.myPlayerId);
-    if (error) return;
-    for (var row of (data || [])) {
-      var pk = AjedrezChat.b64ToBytes(row.public_key);
-      chatState.peerKeys[row.player_id] = pk;
-      await AjedrezChat.setPeerPublicKey(chatState.gameId, row.player_id, pk);
+    try {
+      var res = await api('/games/' + chatState.gameId + '/keys');
+      for (var row of (res.keys || [])) {
+        if (row.playerId !== chatState.myPlayerId) {
+          var pk = AjedrezChat.b64ToBytes(row.publicKey);
+          chatState.peerKeys[row.playerId] = pk;
+          await AjedrezChat.setPeerPublicKey(chatState.gameId, row.playerId, pk);
+        }
+      }
+    } catch (e) {
+      console.error('Error cargando claves:', e);
     }
   }
 
   // ─────────────────────────────────────────────────────────────
-  // Realtime
+  // Realtime (solo lectura, funciona con anon)
   // ─────────────────────────────────────────────────────────────
   function subscribeRealtime() {
     var sb = chatState.supabase;
+    if (!sb) return;
     var gid = chatState.gameId;
 
-    // Mensajes
     chatState.msgChannel = sb
       .channel('chat-msgs-' + gid)
       .on('postgres_changes', {
@@ -241,7 +243,6 @@
       })
       .subscribe();
 
-    // Claves de rivales
     chatState.keyChannel = sb
       .channel('chat-keys-' + gid)
       .on('postgres_changes', {
@@ -261,21 +262,31 @@
   }
 
   // ─────────────────────────────────────────────────────────────
-  // Historial y polling fallback
+  // Historial y polling fallback (usa API REST)
   // ─────────────────────────────────────────────────────────────
   async function fetchHistory() {
-    var sb = chatState.supabase;
-    var { data, error } = await sb
-      .from('game_messages')
-      .select('*')
-      .eq('game_id', chatState.gameId)
-      .order('created_at', { ascending: true })
-      .limit(100);
-    if (error) return;
-    chatState.messages = data || [];
-    await decryptAllMessages();
-    renderMessages();
-    await fetchPeerKeys();
+    try {
+      var res = await api('/games/' + chatState.gameId + '/messages?limit=100');
+      chatState.messages = (res.messages || []).map(normalizeMessage);
+      await decryptAllMessages();
+      renderMessages();
+      await fetchPeerKeys();
+    } catch (e) {
+      console.error('Error cargando historial:', e);
+    }
+  }
+
+  function normalizeMessage(row) {
+    // Normaliza snake_case (realtime) y camelCase (API) a formato interno
+    return {
+      id: row.id,
+      player_id: row.player_id || row.playerId,
+      player_name: row.player_name || row.playerName,
+      content: row.content,
+      version: row.version,
+      nonce: row.nonce,
+      created_at: row.created_at || row.createdAt,
+    };
   }
 
   function startPollingFallback() {
@@ -286,12 +297,12 @@
   // Manejo de mensajes
   // ─────────────────────────────────────────────────────────────
   function handleNewMessage(row) {
-    // Evitar duplicados
-    if (chatState.messages.some(function (m) { return m.id === row.id; })) return;
-    chatState.messages.push(row);
-    decryptMessage(row).then(function (decrypted) {
-      row.decrypted = decrypted;
-      row.encrypted = (row.version === 1);
+    var msg = normalizeMessage(row);
+    if (chatState.messages.some(function (m) { return m.id === msg.id; })) return;
+    chatState.messages.push(msg);
+    decryptMessage(msg).then(function (decrypted) {
+      msg.decrypted = decrypted;
+      msg.encrypted = (msg.version === 1);
       renderMessages();
       if (chatState.isOpen) scrollToBottom();
     });
@@ -305,11 +316,10 @@
   }
 
   async function decryptMessage(msg) {
-    if (msg.player_id === chatState.myPlayerId) return msg.content; // mis propios mensajes ya los conozco
+    if (msg.player_id === chatState.myPlayerId) return msg.content;
     if (msg.version === 0) return msg.content;
     var peerKey = chatState.peerKeys[msg.player_id];
     if (!peerKey) {
-      // Intentar cargar de IndexedDB
       peerKey = await AjedrezChat.getPeerPublicKey(chatState.gameId, msg.player_id);
       if (peerKey) chatState.peerKeys[msg.player_id] = peerKey;
     }
@@ -323,10 +333,8 @@
     chatState.elements.input.value = '';
     chatState.elements.sendBtn.disabled = true;
 
-    // Optimista: mostrar mi mensaje inmediato
     var optimistic = {
       id: Date.now(),
-      game_id: chatState.gameId,
       player_id: chatState.myPlayerId,
       player_name: chatState.myPlayerName,
       content: text,
@@ -341,7 +349,6 @@
     renderMessages();
     scrollToBottom();
 
-    // Cifrar para cada rival
     var peerIds = Object.keys(chatState.peerKeys);
     var promises = peerIds.map(function (pid) {
       return AjedrezChat.prepareMessage(
@@ -351,24 +358,24 @@
       );
     });
     var prepared = await Promise.all(promises);
-    // Usamos la primera (todas iguales si hay rivales; si no hay, version=0)
     var payload = prepared[0] || { version: 0, content: text, nonce: null };
 
-    var sb = chatState.supabase;
-    var { error } = await sb.from('game_messages').insert({
-      game_id: chatState.gameId,
-      player_id: chatState.myPlayerId,
-      player_name: chatState.myPlayerName,
-      content: payload.content,
-      version: payload.version,
-      nonce: payload.nonce,
-    });
-    if (error) {
-      console.error('Error enviando mensaje:', error);
-      // Quitar optimista y mostrar error
+    try {
+      await api('/games/' + chatState.gameId + '/messages', {
+        method: 'POST',
+        body: JSON.stringify({
+          playerId: chatState.myPlayerId,
+          playerName: chatState.myPlayerName,
+          content: payload.content,
+          version: payload.version,
+          nonce: payload.nonce,
+        }),
+      });
+    } catch (e) {
+      console.error('Error enviando mensaje:', e);
       chatState.messages.pop();
       renderMessages();
-      showStatus('Error al enviar: ' + error.message, 'error');
+      showStatus('Error al enviar: ' + e.message, 'error');
     }
     chatState.elements.sendBtn.disabled = false;
   }
