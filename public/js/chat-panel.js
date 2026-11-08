@@ -34,6 +34,16 @@
   // Inicialización
   // ─────────────────────────────────────────────────────────────
   function init(gameId, playerId, playerName, supabaseClient) {
+    // Evita duplicar panel/canales/polling si la partida se reabre estando activa.
+    if (chatState.gameId === gameId && document.getElementById('chat-panel')) {
+      chatState.myPlayerId = playerId;
+      chatState.myPlayerName = playerName;
+      chatState.supabase = supabaseClient || chatState.supabase;
+      return;
+    }
+    // Si quedó un panel de otra partida (cambio rápido de vista), lo limpia.
+    if (document.getElementById('chat-panel')) destroy();
+
     chatState.gameId = gameId;
     chatState.myPlayerId = playerId;
     chatState.myPlayerName = playerName;
@@ -60,11 +70,16 @@
    */
   function ensureChatStarted() {
     if (startPromise) return startPromise;
+    var gid = chatState.gameId;
     startPromise = (async function () {
       await loadKeyPair();
+      if (chatState.gameId !== gid) return;
       if (chatState.consentGiven) await publishMyPublicKey();
+      if (chatState.gameId !== gid) return;
       await fetchPeerKeys();
+      if (chatState.gameId !== gid) return;
       await fetchHistory();
+      if (chatState.gameId !== gid) return;
       subscribeRealtime();
     })();
     startPromise.catch(function () { startPromise = null; });
@@ -74,7 +89,8 @@
   function destroy() {
     if (chatState.msgChannel && chatState.supabase) chatState.supabase.removeChannel(chatState.msgChannel);
     if (chatState.keyChannel && chatState.supabase) chatState.supabase.removeChannel(chatState.keyChannel);
-    if (chatState.pollTimer) clearInterval(chatState.pollTimer);
+    stopPollingFallback();
+    document.removeEventListener('keydown', onKeydown);
     startPromise = null;
     // Eliminar elementos DOM
     var panel = document.getElementById('chat-panel');
@@ -199,9 +215,11 @@
       sendMessage();
     });
 
-    document.addEventListener('keydown', function (e) {
-      if (e.key === 'Escape' && chatState.isOpen) closePanel();
-    });
+    document.addEventListener('keydown', onKeydown);
+  }
+
+  function onKeydown(e) {
+    if (e.key === 'Escape' && chatState.isOpen) closePanel();
   }
 
   function togglePanel() {
@@ -293,6 +311,16 @@
     if (!sb) return;
     var gid = chatState.gameId;
 
+    // Nunca dejar canales duplicados de una suscripción anterior.
+    if (chatState.msgChannel) {
+      sb.removeChannel(chatState.msgChannel);
+      chatState.msgChannel = null;
+    }
+    if (chatState.keyChannel) {
+      sb.removeChannel(chatState.keyChannel);
+      chatState.keyChannel = null;
+    }
+
     chatState.msgChannel = sb
       .channel('chat-msgs-' + gid)
       .on('postgres_changes', {
@@ -303,7 +331,12 @@
       }, function (payload) {
         handleNewMessage(payload.new);
       })
-      .subscribe();
+      .subscribe(function (status) {
+        if (chatState.gameId !== gid) return;
+        // Con Realtime conectado no hace falta el polling de respaldo.
+        if (status === 'SUBSCRIBED') stopPollingFallback();
+        else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') startPollingFallback();
+      });
 
     chatState.keyChannel = sb
       .channel('chat-keys-' + gid)
@@ -326,12 +359,28 @@
   // Historial y polling fallback (usa API REST)
   // ─────────────────────────────────────────────────────────────
   async function fetchHistory() {
+    var gid = chatState.gameId;
+    if (!gid) return;
     try {
-      var res = await api('/games/' + chatState.gameId + '/messages?limit=100');
-      chatState.messages = (res.messages || []).map(normalizeMessage);
+      var res = await api('/games/' + gid + '/messages?limit=100');
+      if (chatState.gameId !== gid) return;
+      var next = (res.messages || []).map(normalizeMessage);
+      // Conservar lo ya descifrado: evita repetir criptografía en cada polling.
+      var prevById = {};
+      chatState.messages.forEach(function (m) { prevById[m.id] = m; });
+      next.forEach(function (m) {
+        var old = prevById[m.id];
+        if (old && old.version === m.version && old.content === m.content) {
+          m.decrypted = old.decrypted;
+          m.encrypted = old.encrypted;
+          m.own = old.own;
+        }
+      });
+      chatState.messages = next;
       // Pintar ya lo recibido: si falla el descifrado, no se pierde el mensaje.
       renderMessages();
       await fetchPeerKeys();
+      if (chatState.gameId !== gid) return;
       await decryptAllMessages();
       renderMessages();
     } catch (e) {
@@ -354,10 +403,16 @@
   }
 
   function startPollingFallback() {
-    if (chatState.pollTimer) clearInterval(chatState.pollTimer);
+    if (chatState.pollTimer) return;
     chatState.pollTimer = setInterval(function () {
-      fetchHistory();
+      if (!document.hidden) fetchHistory();
     }, 5000);
+  }
+
+  function stopPollingFallback() {
+    if (!chatState.pollTimer) return;
+    clearInterval(chatState.pollTimer);
+    chatState.pollTimer = null;
   }
 
   // ─────────────────────────────────────────────────────────────
@@ -371,12 +426,30 @@
       msg.decrypted = decrypted;
       msg.encrypted = (msg.version === 1);
       renderMessages();
-      if (chatState.isOpen) scrollToBottom();
     });
+  }
+
+  var DECRYPT_PLACEHOLDERS = [
+    '[Cifrado - clave del rival no disponible]',
+    '[Cifrado - claves locales aún no listas]',
+    '[No se pudo descifrar]',
+  ];
+
+  function needsDecrypt(msg) {
+    if (msg.decrypted === undefined || msg.decrypted === null) return true;
+    if (msg.player_id === chatState.myPlayerId) return false;
+    if (msg.version === 0) return false;
+    // Reintentar solo si antes faltaban claves y ya están disponibles.
+    if (!chatState.peerKeys[msg.player_id] || !chatState.myKeyPair) return false;
+    return DECRYPT_PLACEHOLDERS.indexOf(msg.decrypted) !== -1;
   }
 
   async function decryptAllMessages() {
     for (var msg of chatState.messages) {
+      if (!needsDecrypt(msg)) {
+        msg.encrypted = (msg.version === 1);
+        continue;
+      }
       msg.decrypted = await decryptMessage(msg);
       msg.encrypted = (msg.version === 1);
     }
@@ -457,7 +530,8 @@
       }
     } catch (e) {
       console.error('Error enviando mensaje:', e);
-      chatState.messages.pop();
+      var idx = chatState.messages.indexOf(optimistic);
+      if (idx !== -1) chatState.messages.splice(idx, 1);
       renderMessages();
       showStatus('Error al enviar: ' + e.message, 'error');
     }
@@ -469,22 +543,41 @@
   // ─────────────────────────────────────────────────────────────
   function renderMessages() {
     var container = chatState.elements.messages;
-    container.innerHTML = '';
-    for (var msg of chatState.messages) {
-      var isOwn = msg.own || msg.player_id === chatState.myPlayerId;
-      var div = document.createElement('div');
-      div.className = 'chat-msg' + (isOwn ? ' own' : '') + (msg.encrypted ? ' encrypted' : '');
-      var time = formatTime(msg.created_at);
-      var badge = msg.encrypted ? '<span class="enc-badge" title="Cifrado E2E">🔒</span>' : '';
-      div.innerHTML =
-        '<div class="msg-header">' +
-        '  <span class="msg-name">' + escapeHtml(msg.player_name) + (isOwn ? ' (tú)' : '') + '</span>' +
-        '  <span class="msg-time">' + time + '</span>' +
-        '  ' + badge +
-        '</div>' +
-        '<div class="msg-text">' + escapeHtml(msg.decrypted || msg.content) + '</div>';
-      container.appendChild(div);
+    if (!container) return;
+    // Reutiliza los nodos existentes (diff por posición): evita el parpadeo y
+    // el salto de scroll que produce reconstruir todo el DOM en cada polling.
+    var nearBottom = container.scrollHeight - container.scrollTop - container.clientHeight <= 40;
+    for (var i = 0; i < chatState.messages.length; i++) {
+      var el = container.children[i];
+      if (!el) {
+        el = document.createElement('div');
+        container.appendChild(el);
+      }
+      updateMessageElement(el, chatState.messages[i]);
     }
+    while (container.children.length > chatState.messages.length) {
+      container.removeChild(container.lastElementChild);
+    }
+    if (nearBottom) scrollToBottom();
+  }
+
+  function updateMessageElement(el, msg) {
+    var isOwn = msg.own || msg.player_id === chatState.myPlayerId;
+    var text = msg.decrypted != null ? msg.decrypted : msg.content;
+    var sig = [msg.id, msg.version, isOwn ? 1 : 0, msg.player_name, text].join('\u0000');
+    if (el.dataset.sig === sig) return;
+    el.dataset.id = String(msg.id);
+    el.dataset.sig = sig;
+    el.className = 'chat-msg' + (isOwn ? ' own' : '') + (msg.encrypted ? ' encrypted' : '');
+    var time = formatTime(msg.created_at);
+    var badge = msg.encrypted ? '<span class="enc-badge" title="Cifrado E2E">🔒</span>' : '';
+    el.innerHTML =
+      '<div class="msg-header">' +
+      '  <span class="msg-name">' + escapeHtml(msg.player_name) + (isOwn ? ' (tú)' : '') + '</span>' +
+      '  <span class="msg-time">' + time + '</span>' +
+      '  ' + badge +
+      '</div>' +
+      '<div class="msg-text">' + escapeHtml(text) + '</div>';
   }
 
   function formatTime(iso) {
@@ -500,11 +593,13 @@
 
   function scrollToBottom() {
     var c = chatState.elements.messages;
+    if (!c) return;
     c.scrollTop = c.scrollHeight;
   }
 
   function showStatus(text, type) {
     var el = chatState.elements.status;
+    if (!el) return;
     el.textContent = text;
     el.className = 'chat-status ' + (type || '');
     setTimeout(function () { el.textContent = ''; el.className = 'chat-status'; }, 4000);
