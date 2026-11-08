@@ -128,13 +128,17 @@ let _sodiumReady = null;
 
 async function getSodium() {
   if (_sodiumReady) return _sodiumReady;
-  // Carga libsodium-wrappers desde CDN
+  // Bundle local (libsodium.js): no depende de CDNs externos.
   _sodiumReady = (async () => {
-    if (window.sodium) return window.sodium;
-    await loadScript('https://cdn.jsdelivr.net/npm/libsodium-wrappers@0.7.13/dist/browsers/libsodium.wrapper.min.js');
-    await window.sodium_ready;
+    if (!window.sodium) {
+      await loadScript('/vendor/sodium.js');
+    }
+    if (!window.sodium) throw new Error('libsodium no disponible');
+    await window.sodium.ready;
     return window.sodium;
   })();
+  // Si falla, permitir reintentos posteriores.
+  _sodiumReady.catch(function () { _sodiumReady = null; });
   return _sodiumReady;
 }
 
@@ -177,27 +181,57 @@ function openDB() {
  */
 async function getOrCreateKeyPair(gameId) {
   const db = await openDB();
+  const stored = await readKeyRecord(db, gameId);
+  if (stored) return decodeKeyRecord(stored);
+
+  // libsodium se carga ANTES de abrir la transacción: IndexedDB no permite
+  // await dentro de una transacción (se desactiva y el put lanza error).
+  const sodium = await getSodium();
+  const kp = sodium.crypto_box_keypair();
+  const record = {
+    gameId,
+    publicKey: bytesToB64(kp.publicKey),
+    privateKey: bytesToB64(kp.privateKey),
+  };
+  const saved = await saveKeyRecordIfAbsent(db, record);
+  return decodeKeyRecord(saved);
+}
+
+function readKeyRecord(db, gameId) {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readonly');
+    const req = tx.objectStore(STORE_NAME).get(gameId);
+    req.onsuccess = () => resolve(req.result || null);
+    req.onerror = () => reject(req.error);
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+function saveKeyRecordIfAbsent(db, record) {
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_NAME, 'readwrite');
     const store = tx.objectStore(STORE_NAME);
-    const getReq = store.get(gameId);
-    getReq.onsuccess = async () => {
-      if (getReq.result) {
-        resolve({
-          publicKey: b64ToBytes(getReq.result.publicKey),
-          privateKey: b64ToBytes(getReq.result.privateKey),
-        });
-      } else {
-        const sodium = await getSodium();
-        const kp = sodium.crypto_box_keypair();
-        const pubB64 = bytesToB64(kp.publicKey);
-        const privB64 = bytesToB64(kp.privateKey);
-        store.put({ gameId, publicKey: pubB64, privateKey: privB64 });
-        resolve({ publicKey: kp.publicKey, privateKey: kp.privateKey });
+    let result = record;
+    const req = store.get(record.gameId);
+    req.onsuccess = () => {
+      if (req.result) {
+        result = req.result; // otra pestaña pudo crearla antes
+        return;
       }
+      store.put(record);
     };
-    getReq.onerror = () => reject(getReq.error);
+    req.onerror = () => reject(req.error);
+    tx.oncomplete = () => resolve(result);
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error || new Error('Transacción abortada'));
   });
+}
+
+function decodeKeyRecord(record) {
+  return {
+    publicKey: b64ToBytes(record.publicKey),
+    privateKey: b64ToBytes(record.privateKey),
+  };
 }
 
 /**

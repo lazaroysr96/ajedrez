@@ -28,6 +28,7 @@
   };
 
   var MAX_OWN_PLAINTEXT = 100;
+  var startPromise = null;
 
   // ─────────────────────────────────────────────────────────────
   // Inicialización
@@ -46,29 +47,35 @@
 
     buildUI();
     bindEvents();
-    loadKeyPair()
-      .then(function () {
-        if (chatState.consentGiven) return publishMyPublicKey();
-      })
-      .then(function () {
-        return fetchPeerKeys();
-      })
-      .then(function () {
-        subscribeRealtime();
-        return fetchHistory();
-      })
-      .then(function () {
-        startPollingFallback();
-      })
-      .catch(function (e) {
-        console.error('Error inicializando chat:', e);
-      });
+    // La recepción NO depende de las claves: se sincroniza desde el inicio.
+    startPollingFallback();
+    ensureChatStarted().catch(function (e) {
+      console.error('Error inicializando chat:', e);
+    });
+  }
+
+  /**
+   * Carga claves, publica la propia (si hay consentimiento) y descarga el
+   * historial. Idempotente: varias llamadas comparten la misma promesa.
+   */
+  function ensureChatStarted() {
+    if (startPromise) return startPromise;
+    startPromise = (async function () {
+      await loadKeyPair();
+      if (chatState.consentGiven) await publishMyPublicKey();
+      await fetchPeerKeys();
+      await fetchHistory();
+      subscribeRealtime();
+    })();
+    startPromise.catch(function () { startPromise = null; });
+    return startPromise;
   }
 
   function destroy() {
     if (chatState.msgChannel && chatState.supabase) chatState.supabase.removeChannel(chatState.msgChannel);
     if (chatState.keyChannel && chatState.supabase) chatState.supabase.removeChannel(chatState.keyChannel);
     if (chatState.pollTimer) clearInterval(chatState.pollTimer);
+    startPromise = null;
     // Eliminar elementos DOM
     var panel = document.getElementById('chat-panel');
     var toggle = document.getElementById('chat-toggle');
@@ -234,7 +241,13 @@
     chatState.consentGiven = true;
     AjedrezChat.setChatConsent(true);
     showChat();
-    publishMyPublicKey();
+    ensureChatStarted()
+      .then(function () { return publishMyPublicKey(); })
+      .then(function () { return fetchPeerKeys(); })
+      .then(function () { return fetchHistory(); })
+      .catch(function (e) {
+        console.error('Error activando cifrado:', e);
+      });
   }
 
   // ─────────────────────────────────────────────────────────────
@@ -245,6 +258,7 @@
   }
 
   async function publishMyPublicKey() {
+    if (!chatState.myKeyPair) return;
     var pubB64 = AjedrezChat.bytesToB64(chatState.myKeyPair.publicKey);
     try {
       await api('/games/' + chatState.gameId + '/keys', {
@@ -315,11 +329,14 @@
     try {
       var res = await api('/games/' + chatState.gameId + '/messages?limit=100');
       chatState.messages = (res.messages || []).map(normalizeMessage);
+      // Pintar ya lo recibido: si falla el descifrado, no se pierde el mensaje.
+      renderMessages();
       await fetchPeerKeys();
       await decryptAllMessages();
       renderMessages();
     } catch (e) {
       console.error('Error cargando historial:', e);
+      showStatus('No se pudo cargar el chat', 'error');
     }
   }
 
@@ -337,7 +354,10 @@
   }
 
   function startPollingFallback() {
-    chatState.pollTimer = setInterval(fetchHistory, 5000);
+    if (chatState.pollTimer) clearInterval(chatState.pollTimer);
+    chatState.pollTimer = setInterval(function () {
+      fetchHistory();
+    }, 5000);
   }
 
   // ─────────────────────────────────────────────────────────────
@@ -376,6 +396,7 @@
       if (peerKey) chatState.peerKeys[msg.player_id] = peerKey;
     }
     if (!peerKey) return '[Cifrado - clave del rival no disponible]';
+    if (!chatState.myKeyPair) return '[Cifrado - claves locales aún no listas]';
     try {
       return await AjedrezChat.decryptMessage(msg, chatState.myKeyPair.privateKey, peerKey);
     } catch (e) {
@@ -406,10 +427,11 @@
     scrollToBottom();
 
     var peerIds = Object.keys(chatState.peerKeys);
+    var myPriv = chatState.myKeyPair ? chatState.myKeyPair.privateKey : null;
     var promises = peerIds.map(function (pid) {
       return AjedrezChat.prepareMessage(
         { game_id: chatState.gameId, player_id: chatState.myPlayerId, player_name: chatState.myPlayerName, text: text },
-        chatState.myKeyPair.privateKey,
+        myPriv,
         chatState.peerKeys[pid]
       );
     });
@@ -449,13 +471,14 @@
     var container = chatState.elements.messages;
     container.innerHTML = '';
     for (var msg of chatState.messages) {
+      var isOwn = msg.own || msg.player_id === chatState.myPlayerId;
       var div = document.createElement('div');
-      div.className = 'chat-msg' + (msg.own ? ' own' : '') + (msg.encrypted ? ' encrypted' : '');
+      div.className = 'chat-msg' + (isOwn ? ' own' : '') + (msg.encrypted ? ' encrypted' : '');
       var time = formatTime(msg.created_at);
       var badge = msg.encrypted ? '<span class="enc-badge" title="Cifrado E2E">🔒</span>' : '';
       div.innerHTML =
         '<div class="msg-header">' +
-        '  <span class="msg-name">' + escapeHtml(msg.player_name) + (msg.own ? ' (tú)' : '') + '</span>' +
+        '  <span class="msg-name">' + escapeHtml(msg.player_name) + (isOwn ? ' (tú)' : '') + '</span>' +
         '  <span class="msg-time">' + time + '</span>' +
         '  ' + badge +
         '</div>' +

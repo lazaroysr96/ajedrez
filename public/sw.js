@@ -4,11 +4,12 @@
  * - Navegación: red primero, caché como respaldo (offline).
  * - Estáticos propios: stale-while-revalidate.
  * - API: siempre red (nunca se cachean partidas ni chat).
- * - CDN (Supabase, libsodium, Stockfish): stale-while-revalidate.
+ * - libsodium se sirve local (/vendor/sodium.js) y se cachea como estático.
+ * - CDN (Supabase, Stockfish): stale-while-revalidate.
  */
 'use strict';
 
-var CACHE_VERSION = 'ajedrez-v1';
+var CACHE_VERSION = 'ajedrez-v2';
 var SHELL_CACHE = CACHE_VERSION + '-shell';
 var RUNTIME_CACHE = CACHE_VERSION + '-runtime';
 
@@ -23,6 +24,7 @@ var APP_SHELL = [
   '/js/chat-panel.js',
   '/js/app.js',
   '/js/pwa.js',
+  '/vendor/sodium.js',
   '/icon.jpg',
   '/icons/icon-192.png',
   '/icons/icon-512.png',
