@@ -144,11 +144,23 @@ var els = {
     } else if (kind === 'end') {
       tone(ctx, 523.25, 0, 0.2, 'triangle', 0.09);
       tone(ctx, 392, 0.16, 0.32, 'triangle', 0.09);
+    } else if (kind === 'chat') {
+      tone(ctx, 987.77, 0, 0.09, 'sine', 0.1);
+      tone(ctx, 1318.51, 0.07, 0.16, 'sine', 0.08);
+    } else if (kind === 'chat-send') {
+      tone(ctx, 523.25, 0, 0.06, 'sine', 0.06);
+      tone(ctx, 783.99, 0.05, 0.1, 'sine', 0.05);
     } else {
       tone(ctx, 880, 0, 0.11, 'sine', 0.09);
       tone(ctx, 1174.66, 0.07, 0.18, 'sine', 0.07);
     }
   }
+
+  // Sonidos del chat: respetan el mismo botón "Sonido" global.
+  window.AjedrezSound = {
+    chatReceive: function () { playAlert('chat'); },
+    chatSend: function () { playAlert('chat-send'); },
+  };
 
   function updateSoundButton() {
     els.soundBtn.textContent = alerts.enabled ? 'Sonido: sí' : 'Sonido: no';

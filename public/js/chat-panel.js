@@ -18,6 +18,7 @@
     messages: [],              // {id, player_id, player_name, content, version, nonce, created_at, decrypted, encrypted}
     ownPlaintext: {},          // messageId -> texto propio (cifrado para el rival)
     ownPlaintextKey: null,
+    soundNotified: {},         // messageId -> ya sonó (evita repetir con polling)
     supabase: null,
     msgChannel: null,
     keyChannel: null,
@@ -106,6 +107,7 @@
       messages: [],
       ownPlaintext: {},
       ownPlaintextKey: null,
+      soundNotified: {},
       supabase: null,
       msgChannel: null,
       keyChannel: null,
@@ -114,6 +116,16 @@
       isOpen: false,
       consentGiven: false,
     };
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // Sonidos (usa el AudioContext y el ajuste global de app.js)
+  // ─────────────────────────────────────────────────────────────
+  function playSound(kind) {
+    var snd = window.AjedrezSound;
+    if (!snd) return;
+    if (kind === 'send') snd.chatSend();
+    else snd.chatReceive();
   }
 
   // ─────────────────────────────────────────────────────────────
@@ -376,9 +388,20 @@
           m.own = old.own;
         }
       });
+      var hadMessages = chatState.messages.length > 0;
       chatState.messages = next;
       // Pintar ya lo recibido: si falla el descifrado, no se pierde el mensaje.
       renderMessages();
+      if (hadMessages) {
+        var freshIncoming = next.filter(function (m) {
+          return m.player_id !== chatState.myPlayerId &&
+            !prevById[m.id] && !chatState.soundNotified[m.id];
+        });
+        if (freshIncoming.length) {
+          freshIncoming.forEach(function (m) { chatState.soundNotified[m.id] = true; });
+          playSound('receive');
+        }
+      }
       await fetchPeerKeys();
       if (chatState.gameId !== gid) return;
       await decryptAllMessages();
@@ -422,6 +445,10 @@
     var msg = normalizeMessage(row);
     if (chatState.messages.some(function (m) { return m.id === msg.id; })) return;
     chatState.messages.push(msg);
+    if (msg.player_id !== chatState.myPlayerId) {
+      chatState.soundNotified[msg.id] = true;
+      playSound('receive');
+    }
     decryptMessage(msg).then(function (decrypted) {
       msg.decrypted = decrypted;
       msg.encrypted = (msg.version === 1);
@@ -528,6 +555,7 @@
         optimistic.version = 1;
         optimistic.encrypted = true;
       }
+      playSound('send');
     } catch (e) {
       console.error('Error enviando mensaje:', e);
       var idx = chatState.messages.indexOf(optimistic);
